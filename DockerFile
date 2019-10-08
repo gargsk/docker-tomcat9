@@ -1,0 +1,131 @@
+FROM gargsk/openjdk-11:1.0.0
+LABEL Name Tomcat-9
+LABEL Version 1.0.0
+LABEL Architecture x86_64
+
+ENV LANG C.UTF-8
+ENV JDK_HOME='/opt/java/adoptopenjdk-11'
+ENV JDK_URL_SUFFIX='OpenJDK11U-jdk_x64_linux_11.0.4_11.tar.gz'
+ENV CATALINA_HOME /usr/local/tomcat
+ENV PATH $CATALINA_HOME/bin:$PATH
+ENV TOMCAT_NATIVE_LIBDIR $CATALINA_HOME/native-jni-lib
+ENV LD_LIBRARY_PATH ${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$TOMCAT_NATIVE_LIBDIR
+ENV TOMCAT_MAJOR='9'
+ENV TOMCAT_VERSION='9.0.26'
+ENV TOMCAT_TGZ_URLS \
+    https://www.apache.org/dyn/closer.cgi?action=download&filename=tomcat/tomcat-$TOMCAT_MAJOR/v$TOMCAT_VERSION/bin/apache-tomcat-$TOMCAT_VERSION.tar.gz \
+    https://www.apache.org/dist/tomcat/tomcat-$TOMCAT_MAJOR/v$TOMCAT_VERSION/bin/apache-tomcat-$TOMCAT_VERSION.tar.gz \
+	https://archive.apache.org/dist/tomcat/tomcat-$TOMCAT_MAJOR/v$TOMCAT_VERSION/bin/apache-tomcat-$TOMCAT_VERSION.tar.gz
+ENV TOMCAT_ASC_URLS \
+	https://www.apache.org/dist/tomcat/tomcat-$TOMCAT_MAJOR/v$TOMCAT_VERSION/bin/apache-tomcat-$TOMCAT_VERSION.tar.gz.asc \
+	https://archive.apache.org/dist/tomcat/tomcat-$TOMCAT_MAJOR/v$TOMCAT_VERSION/bin/apache-tomcat-$TOMCAT_VERSION.tar.gz.asc
+ENV TOMCAT_GPG_KEYS 05AB33110949707C93A279E3D3EFE6B686867BA6 07E48665A34DCAFAE522E5E6266191C37C037D42 47309207D818FFD8DCD3F83F1931D684307A10A5 541FBE7D8F78B25E055DDEE13C370389288584E7 61B832AC2F1C5A90F0F9B00A1C506407564C17A3 713DA88BE50911535FE716F5208B0AB1D63011C7 79F7026C690BAA50B92CD8B66A3AD3F4F22C4FED 9BA44C2621385CB966EBA586F72C284D731FABEE A27677289986DB50844682F8ACB77FC2E86E29AC A9C5DF4D22E99998D9875A5110C01C5A2F6059E7 DCFD35E0BF8CA7344752DE8B6FB21E8933C60243 F3A04C595DB5B6A5F1ECA43E3B7BBB100D811BBE F7DA48BB64BCB84ECBA7EE6935CD23C10D498E23
+ENV ADOPTOPENJDK_GPG_KEYS CA5F11C6CE22644D42C6AC4492EF8D39DC13168F EAC843EBD3EFDB98CC772FADA5CD6035332FA671
+
+RUN set -eux \
+    # Refer to http://linuxcommand.org/lc3_man_pages/seth.html for set options.
+    # -e  Exit immediately if a command exits with a non-zero status.
+    # -u  Treat unset variables as an error when substituting.
+    # -x  Print commands and their arguments as they are executed.
+    && apt-get update
+
+RUN set -eux \
+    success=; \
+        for url in $TOMCAT_TGZ_URLS; do \
+            if wget -O tomcat.tar.gz "$url" --progress=dot:giga ; then \
+                success=1; \
+                break; \
+            fi; \
+        done; \
+    [ -n "$success" ]; \
+    \
+    success=; \
+        for url in $TOMCAT_ASC_URLS; do \
+            if wget -O tomcat.tar.gz.asc "$url" --progress=dot:giga ; then \
+                success=1; \
+                break; \
+            fi; \
+        done; \
+    [ -n "$success" ]; \
+    wget -O adoptopenjdk-jdk_x64_linux_11.0.4_11.tgz "${ADOPTOPENJDK_BASE_URL}${JDK_URL_SUFFIX}" --progress=dot:giga; \
+	wget -O adoptopenjdk-jdk_x64_linux_11.0.4_11.tgz.asc "${ADOPTOPENJDK_BASE_URL}${JDK_URL_SUFFIX}.sign"; \
+    \
+    savedAptMark="$(apt-mark showmanual)"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gnupg dirmngr; \
+    export GNUPGHOME="$(mktemp -d)"; \
+    for key in $TOMCAT_GPG_KEYS; do \
+		gpg --keyserver ha.pool.sks-keyservers.net --recv-keys "$key"; \
+	done; \
+    for key1 in $ADOPTOPENJDK_GPG_KEYS; do \
+		gpg --keyserver ha.pool.sks-keyservers.net --recv-keys "$key1"; \
+	done; \
+    \
+    gpg --batch --verify adoptopenjdk-jdk_x64_linux_11.0.4_11.tgz.asc adoptopenjdk-jdk_x64_linux_11.0.4_11.tgz; \
+	gpg --batch --verify tomcat.tar.gz.asc tomcat.tar.gz; \
+    gpgconf --kill all; \
+    rm -rf "$GNUPGHOME"; \
+    \
+    mkdir -p "$JDK_HOME"; \
+	tar --extract --file adoptopenjdk-jdk_x64_linux_11.0.4_11.tgz --directory "$JDK_HOME" --strip-components 1; \
+	rm -rf adoptopenjdk-jdk_x64_linux_11.0.4_11.tgz; \
+    rm -rf adoptopenjdk-jdk_x64_linux_11.0.4_11.tgz.asc; \
+    \
+    mkdir -p "$CATALINA_HOME"; \
+    tar --extract --file tomcat.tar.gz --directory "$CATALINA_HOME" --strip-components=1; \
+	rm -rf tomcat.tar.gz; \
+    rm -rf tomcat.tar.gz.asc; \
+    \   
+    nativeBuildDir="$(mktemp -d)"; \
+	tar --extract --file "$CATALINA_HOME"/bin/tomcat-native.tar.gz --directory "$nativeBuildDir" --strip-components=1; \
+    \
+    apt-get install -y --no-install-recommends \
+		dpkg-dev \
+		gcc \
+		libapr1-dev \
+		libssl-dev \
+		make \
+	; \
+    \
+    ( \
+		cd "$nativeBuildDir/native"; \
+		gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
+		./configure \
+			--build="$gnuArch" \
+			--libdir="$TOMCAT_NATIVE_LIBDIR" \
+			--prefix="$CATALINA_HOME" \
+			--with-apr="$(which apr-1-config)" \
+			--with-java-home="$JDK_HOME" \
+			--with-ssl=yes; \
+		make -j "$(nproc)"; \
+		make install; \
+	); \
+	rm -rf "$nativeBuildDir"; \
+	rm -rf "$CATALINA_HOME"/bin/tomcat-native.tar.gz; \
+    apt-mark auto '.*' > /dev/null; \
+	[ -z "$savedAptMark" ] || apt-mark manual $savedAptMark > /dev/null; \
+	find "$TOMCAT_NATIVE_LIBDIR" -type f -executable -exec ldd '{}' ';' \
+		| awk '/=>/ { print $(NF-1) }' \
+		| sort -u \
+		| xargs -r dpkg-query --search \
+		| cut -d: -f1 \
+		| sort -u \
+		| xargs -r apt-mark manual \
+	; \
+	apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
+	rm -rf /var/lib/apt/lists/*; \
+    rm -rf "$JDK_HOME"; \
+    unset JDK_HOME; \
+    unset JDK_URL_SUFFIX;
+    
+RUN set -eux \
+	&& nativeLines="$(catalina.sh configtest 2>&1)" \
+	&& nativeLines="$(echo "$nativeLines" | grep 'Apache Tomcat Native')" \
+	&& nativeLines="$(echo "$nativeLines" | sort -u)" \
+	&& if ! echo "$nativeLines" | grep 'INFO: Loaded APR based Apache Tomcat Native library' >&2; then \
+		    echo >&2 "$nativeLines"; \
+		    exit 1; \
+	    fi;
+
+EXPOSE 8080
+CMD ["catalina.sh", "run"]
